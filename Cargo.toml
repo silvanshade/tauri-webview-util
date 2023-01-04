@@ -1,0 +1,46 @@
+[package]
+edition = "2021"
+name = "tauri-webview-util"
+version = "0.0.0"
+authors = ["silvanshade <silvanshade@users.noreply.github.com>"]
+license = "Apache-2.0 WITH LLVM-exception"
+homepage = "https://github.com/silvanshade/tauri-webview-util"
+repository = "https://github.com/silvanshade/tauri-webview-util"
+keywords = ["tauri"]
+description = """
+Utilities for working with tauri's PlatformWebview
+"""
+
+[features]
+debug = []
+tracing = ["debug", "dep:tracing"]
+
+[dependencies]
+futures = { version = "0.3", features = ["alloc"], default-features = false }
+tauri = { version = "1.2", features = ["wry"], default-features = false }
+tokio = { version = "1.23", default-features = false }
+tracing = { version = "0.1", features = ["attributes", "std"], optional = true }
+url = "2.3"
+wry = { version = "0.23", default-features = false }
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
+webkit2gtk = { version = "0.18", features = [
+    "v2_22",
+], default-features = false }
+
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+block = { version = "0.1", default-features = false }
+cocoa = { version = "0.24", default-features = false }
+dispatch = { version = "0.2", default-features = false }
+objc = { version = "0.2", default-features = false }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = { version = "=0.19", default-features = false }
+windows = { version = "=0.39", default-features = false }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "z"
+panic = "abort"
+strip = true

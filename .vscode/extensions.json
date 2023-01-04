@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "esbenp.prettier-vscode",
+    "editorconfig.editorconfig",
+    "tamasfe.even-better-toml",
+    "wayou.vscode-todo-highlight"
+  ]
+}
