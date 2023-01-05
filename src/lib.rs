@@ -263,7 +263,7 @@ impl WebviewExt for tauri::Window {
         use std::sync::{Arc, Mutex};
         use webview2_com::{
             GetCookiesCompletedHandler,
-            Microsoft::Web::WebView2::Win32::{ICoreWebView2CookieList, ICoreWebView2_15},
+            Microsoft::Web::WebView2::Win32::{ICoreWebView2CookieList, ICoreWebView2_2},
         };
 
         #[derive(Debug)]
@@ -289,7 +289,7 @@ impl WebviewExt for tauri::Window {
             done_tx: tokio::sync::oneshot::Sender<Option<GetCookiesResult>>,
         ) -> Result<(), wry::Error> {
             let webview = webview.controller().CoreWebView2().map_err(WindowsError)?;
-            let webview = windows::core::Interface::cast::<ICoreWebView2_15>(&webview).map_err(WindowsError)?;
+            let webview = windows::core::Interface::cast::<ICoreWebView2_2>(&webview).map_err(WindowsError)?;
             let manager = webview.CookieManager().map_err(WindowsError)?;
             GetCookiesCompletedHandler::wait_for_async_operation(
                 Box::new(move |handler| {
