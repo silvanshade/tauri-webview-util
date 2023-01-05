@@ -1,69 +1,64 @@
-#[cfg(target_os = "windows")]
-use ::{
-    webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Cookie, COREWEBVIEW2_COOKIE_SAME_SITE_KIND},
-    windows::{core::PWSTR, Win32::Foundation::BOOL},
-};
+#[cfg(feature = "async-graphql")]
+use async_graphql::SimpleObject;
 
-#[derive(Clone, Debug)]
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+use url::Url;
+
+#[cfg_attr(feature = "async-graphql", derive(SimpleObject))]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
 pub struct Cookie {
     pub name: String,
     pub value: String,
     pub domain: String,
     pub path: String,
-    pub expires: f64,
-    pub is_http_only: bool,
-    pub same_site: i32,
-    pub is_secure: bool,
-    pub is_session: bool,
+    pub port_list: Option<Vec<u16>>,
+    pub expires: Option<time::OffsetDateTime>,
+    pub http_only: bool,
+    pub same_site: Option<String>,
+    pub secure: bool,
+    pub session: bool,
+    pub comment: Option<String>,
+    pub comment_url: Option<Url>,
 }
 
-#[cfg(target_os = "windows")]
-impl TryFrom<ICoreWebView2Cookie> for Cookie {
-    type Error = crate::BoxError;
-
-    fn try_from(cookie: ICoreWebView2Cookie) -> Result<Self, Self::Error> {
-        let name = &mut PWSTR::null();
-        let value = &mut PWSTR::null();
-        let domain = &mut PWSTR::null();
-        let path = &mut PWSTR::null();
-        let expires = &mut f64::default();
-        let is_http_only = &mut BOOL::default();
-        let same_site = &mut COREWEBVIEW2_COOKIE_SAME_SITE_KIND::default();
-        let is_secure = &mut BOOL::default();
-        let is_session = &mut BOOL::default();
-
-        unsafe {
-            cookie.Name(name)?;
-            cookie.Value(value)?;
-            cookie.Domain(domain)?;
-            cookie.Path(path)?;
-            cookie.Expires(expires)?;
-            cookie.IsHttpOnly(is_http_only)?;
-            cookie.SameSite(same_site)?;
-            cookie.IsSecure(is_secure)?;
-            cookie.IsSession(is_session)?;
-
-            let name = name.to_string()?;
-            let value = value.to_string()?;
-            let domain = domain.to_string()?;
-            let path = path.to_string()?;
-            let expires = *expires;
-            let is_http_only = is_http_only.as_bool();
-            let same_site = same_site.0;
-            let is_secure = is_secure.as_bool();
-            let is_session = is_session.as_bool();
-
-            Ok(Self {
-                name,
-                value,
-                domain,
-                path,
-                expires,
-                is_http_only,
-                same_site,
-                is_secure,
-                is_session,
-            })
+impl std::fmt::Display for Cookie {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        struct Value<'a>(&'a str);
+        impl<'a> std::fmt::Debug for Value<'a> {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("<...>")
+            }
         }
+
+        let mut r = &mut f.debug_struct("Cookie");
+        r = r.field("name", &self.name);
+        r = r.field("value", &Value(&self.value));
+        r = r.field("domain", &self.domain);
+        r = r.field("path", &self.path);
+        for port_list in self.port_list.iter() {
+            if !port_list.is_empty() {
+                r = r.field("port_list", port_list);
+            }
+        }
+        for expires in self.expires.iter() {
+            r = r.field("expires", expires);
+        }
+        r = r.field("http_only", &self.http_only);
+        for same_site in self.same_site.iter() {
+            r = r.field("same_site", same_site);
+        }
+        r = r.field("secure", &self.secure);
+        r = r.field("session", &self.session);
+        for comment in self.comment.iter() {
+            r = r.field("comment", comment);
+        }
+        for comment_url in self.comment_url.iter() {
+            r = r.field("comment_url", comment_url);
+        }
+        r.finish_non_exhaustive()
     }
 }
