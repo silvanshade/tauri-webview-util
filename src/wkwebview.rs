@@ -1,4 +1,4 @@
-use crate::{ApiResult, BoxError, BoxResult, Cookie};
+use crate::{ApiResult, BoxError, BoxResult, Cookie, CookiePattern};
 use block2::ConcreteBlock;
 use futures::{future::BoxFuture, prelude::*};
 use icrate::{
@@ -57,12 +57,13 @@ impl crate::WebviewExt for Window {
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument)]
-    fn webview_delete_cookies(&self, url: Option<Url>) -> BoxFuture<BoxResult<Vec<Cookie>>> {
+    fn webview_delete_cookies(&self, pattern: Option<CookiePattern>) -> BoxFuture<BoxResult<Vec<Cookie>>> {
         async move {
             let mut result = vec![];
             let cookie_manager = webview_get_cookie_manager(self).await?;
             let cookies = {
-                let iter = webview_get_raw_cookies(self, url.as_ref()).await?;
+                let pattern = pattern.unwrap_or_default();
+                let iter = webview_get_raw_cookies(self, pattern).await?;
                 iter.map(ApiResult::new).collect::<Vec<_>>()
             };
             for cookie in cookies {
@@ -97,9 +98,10 @@ impl crate::WebviewExt for Window {
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument)]
-    fn webview_get_cookies(&self, url: Option<Url>) -> BoxFuture<BoxResult<Vec<Cookie>>> {
+    fn webview_get_cookies(&self, pattern: Option<CookiePattern>) -> BoxFuture<BoxResult<Vec<Cookie>>> {
         async move {
-            webview_get_raw_cookies(self, url.as_ref())
+            let pattern = pattern.unwrap_or_default();
+            webview_get_raw_cookies(self, pattern)
                 .await?
                 .map(|cookie| Cookie::try_from(&cookie))
                 .collect::<BoxResult<Vec<_>>>()
@@ -219,17 +221,24 @@ async fn webview_get_cookie_manager(window: &Window) -> BoxResult<ApiResult<Id<W
 }
 
 #[cfg_attr(feature = "tracing", tracing::instrument)]
-async fn webview_get_raw_cookies<'a>(
+async fn webview_get_raw_cookies(
     window: &Window,
-    url: Option<&'a Url>,
-) -> BoxResult<impl Iterator<Item = Id<NSHTTPCookie, Shared>> + 'a> {
-    let filter = webview_cookie_filter(url)?;
+    pattern: CookiePattern,
+) -> BoxResult<impl Iterator<Item = Id<NSHTTPCookie, Shared>>> {
+    // let filter = webview_cookie_filter(pattern)?;
     let cookies = {
         let iter = webview_get_raw_cookies_for_all_domains(window).await?;
         iter.filter(move |cookie| unsafe {
-            let domain = cookie.domain().to_string();
+            let domain = cookie
+                .domain()
+                .to_string()
+                .strip_prefix('.')
+                .map(Into::into)
+                .unwrap_or_else(|| cookie.domain().to_string());
             let secure = cookie.isSecure();
-            filter(domain, secure)
+            let scheme = if secure { "https" } else { "http" };
+            let url = format!("{scheme}://{domain}");
+            pattern.is_match(&url)
         })
     };
     Ok(cookies)
@@ -266,31 +275,32 @@ async fn webview_get_raw_cookies_for_all_domains(
     Ok(cookies.into_iter())
 }
 
-#[cfg_attr(feature = "tracing", tracing::instrument)]
-fn webview_cookie_filter<'a>(url: Option<&'a Url>) -> BoxResult<impl Fn(String, bool) -> bool + Send + Sync + 'a> {
-    fn identity<'a>() -> Box<dyn Fn(String, bool) -> bool + Send + Sync + 'a> {
-        Box::new(|_domain, _secure| true)
-    }
-    fn with_url_and_host<'a>(url: &'a Url, host: String) -> Box<dyn Fn(String, bool) -> bool + Send + Sync + 'a> {
-        Box::new(move |domain, secure| {
-            domain
-                .strip_suffix(&host)
-                .map(|prefix| prefix == "" || prefix.ends_with('.'))
-                .unwrap_or_default()
-                && if url.scheme() == "https" { secure } else { !secure }
-        })
-    }
-    match url {
-        None => Ok(identity()),
-        Some(url) => match url.host_str().map(Into::<String>::into) {
-            None => {
-                let msg = format!(r#""{url}" has no host"#);
-                return Err(msg.into());
-            },
-            Some(host) => Ok(with_url_and_host(url, host)),
-        },
-    }
-}
+// #[cfg_attr(feature = "tracing", tracing::instrument)]
+// fn webview_cookie_filter(pattern: Option<CookiePattern>) -> BoxResult<impl Fn(String, bool) -> bool + Send + Sync> {
+//     fn identity() -> Box<dyn Fn(String, bool) -> bool + Send + Sync> {
+//         Box::new(|_domain, _secure| true)
+//     }
+//     fn with_pattern_and_host(pattern: CookiePattern, host: String) -> Box<dyn Fn(String, bool) -> bool + Send + Sync> {
+//         Box::new(move |domain, secure| {
+//             todo!()
+//             // domain
+//             //     .strip_suffix(&host)
+//             //     .map(|prefix| prefix == "" || prefix.ends_with('.'))
+//             //     .unwrap_or_default()
+//             //     && if url.scheme() == "https" { secure } else { !secure }
+//         })
+//     }
+//     match url {
+//         None => Ok(identity()),
+//         Some(url) => match url.host_str().map(Into::<String>::into) {
+//             None => {
+//                 let msg = format!(r#""{url}" has no host"#);
+//                 return Err(msg.into());
+//             },
+//             Some(host) => Ok(with_url_and_host(url, host)),
+//         },
+//     }
+// }
 
 trait WebviewExtForWKWebView: private::WebviewExtForWKWebViewSealed {
     #[allow(non_snake_case)]

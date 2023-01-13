@@ -14,7 +14,7 @@ mod wkwebview;
 mod webview2;
 
 mod cookie;
-pub use cookie::Cookie;
+pub use cookie::{Cookie, CookiePattern, CookiePatternBuilder, CookieUrl};
 
 use futures::future::BoxFuture;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -25,8 +25,8 @@ pub type BoxResult<T> = Result<T, BoxError>;
 
 pub trait WebviewExt: private::WebviewExtSealed {
     fn webview_clear_cache(&self) -> BoxFuture<BoxResult<()>>;
-    fn webview_delete_cookies(&self, url: Option<Url>) -> BoxFuture<BoxResult<Vec<Cookie>>>;
-    fn webview_get_cookies(&self, url: Option<Url>) -> BoxFuture<BoxResult<Vec<Cookie>>>;
+    fn webview_delete_cookies(&self, pattern: Option<CookiePattern>) -> BoxFuture<BoxResult<Vec<Cookie>>>;
+    fn webview_get_cookies(&self, pattern: Option<CookiePattern>) -> BoxFuture<BoxResult<Vec<Cookie>>>;
     fn webview_navigate(&self, url: Url) -> BoxResult<()>;
 }
 

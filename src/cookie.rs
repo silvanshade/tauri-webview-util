@@ -4,6 +4,8 @@ use async_graphql::SimpleObject;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::BoxResult;
+use regex::Regex;
 use url::Url;
 
 #[cfg_attr(feature = "async-graphql", derive(SimpleObject))]
@@ -60,5 +62,91 @@ impl std::fmt::Display for Cookie {
             r = r.field("comment_url", comment_url);
         }
         r.finish_non_exhaustive()
+    }
+}
+
+pub struct CookieUrl {
+    pub url: Url,
+    pub match_subdomains: bool,
+}
+
+impl CookieUrl {
+    fn new(url: Url, match_subdomains: bool) -> Self {
+        Self { url, match_subdomains }
+    }
+}
+
+impl From<Url> for CookieUrl {
+    fn from(url: Url) -> Self {
+        let match_subdomains = false;
+        Self { url, match_subdomains }
+    }
+}
+
+pub struct CookiePattern {
+    regex: Regex,
+}
+
+impl CookiePattern {
+    pub fn is_match(&self, domain: &str) -> bool {
+        self.regex.is_match(domain)
+    }
+}
+
+impl Default for CookiePattern {
+    fn default() -> Self {
+        if let Ok(pattern) = CookiePatternBuilder::default().build() {
+            return pattern;
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct CookiePatternBuilder<'a> {
+    urls: Option<&'a [CookieUrl]>,
+    regex: Option<Regex>,
+}
+
+impl<'a> CookiePatternBuilder<'a> {
+    pub fn match_urls(mut self, urls: &'a [CookieUrl]) -> CookiePatternBuilder {
+        self.regex = None;
+        self.urls = urls.into();
+        self
+    }
+
+    pub fn match_regex(mut self, regex: Regex) -> CookiePatternBuilder<'a> {
+        self.urls = None;
+        self.regex = regex.into();
+        self
+    }
+
+    pub fn build(self) -> BoxResult<CookiePattern> {
+        use itertools::Itertools;
+        if let Some(regex) = self.regex {
+            Ok(CookiePattern { regex })
+        } else if let Some(urls) = self.urls {
+            let pattern = urls
+                .into_iter()
+                .map(|CookieUrl { url, match_subdomains }| {
+                    let scheme = url.scheme();
+                    if !["http", "https"].contains(&scheme) {
+                        return Err("scheme must be `http` or `https`".into());
+                    }
+                    let host = url.host().ok_or::<String>(format!("URL {url} has no host"))?;
+                    let prefix = if *match_subdomains { r#".*\.?"# } else { "" };
+                    let pattern = format!("^{scheme}://{prefix}{host}$");
+                    Ok(pattern)
+                })
+                .intersperse(Ok::<String, String>(String::from("|")))
+                .map(|item| item.map_err(Into::into))
+                .collect::<BoxResult<String>>()?;
+            let regex = Regex::new(&pattern)?;
+            Ok(CookiePattern { regex })
+        } else {
+            let regex = Regex::new(r#"^.*$"#)?;
+            Ok(CookiePattern { regex })
+        }
     }
 }
