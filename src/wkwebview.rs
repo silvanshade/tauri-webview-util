@@ -4,7 +4,6 @@ use futures::{future::BoxFuture, prelude::*};
 use icrate::{
     objc2::{
         rc::{Id, Shared},
-        runtime::Object,
         *,
     },
     Foundation::{NSArray, NSDate, NSHTTPCookie, NSNumber, NSSet, NSString, NSURLRequest, NSURL},
@@ -302,12 +301,11 @@ impl WebviewExtForWKWebView for PlatformWebview {
     #[allow(non_snake_case)]
     unsafe fn WKWebView(&self) -> Id<WKWebView, Shared> {
         let src = self.inner();
-        let ptr = std::mem::transmute::<_, *mut Object>(src);
-        let this = match Id::retain_autoreleased(ptr) {
+        let ptr = std::mem::transmute::<_, *mut WKWebView>(src);
+        match Id::retain_autoreleased(ptr) {
             None => unreachable!("pointer should never be null"),
-            Some(id) => id,
-        };
-        Id::cast::<WKWebView>(this)
+            Some(wkwebview) => wkwebview,
+        }
     }
 }
 
@@ -316,16 +314,17 @@ trait SemaphoreExt: private::SemaphoreExtSealed {
 }
 
 impl SemaphoreExt for dispatch::Semaphore {
+    #[cfg_attr(feature = "tracing", tracing::instrument)]
     fn future(&self) -> BoxFuture<BoxResult<()>> {
         async move {
-            if !icrate::Foundation::is_main_thread() {
-                self.wait();
-            } else {
+            if icrate::Foundation::is_main_thread() {
                 let this = self.clone();
                 tokio::task::spawn_blocking(move || {
                     this.wait();
                 })
                 .await?;
+            } else {
+                self.wait();
             }
             Ok(())
         }
