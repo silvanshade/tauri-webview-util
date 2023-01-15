@@ -123,6 +123,7 @@ impl<'a> CookiePatternBuilder<'a> {
     }
 
     pub fn build(self) -> BoxResult<CookiePattern> {
+        #![allow(unstable_name_collisions)]
         use itertools::Itertools;
         if let Some(regex) = self.regex {
             Ok(CookiePattern { regex })
