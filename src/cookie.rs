@@ -71,7 +71,7 @@ pub struct CookieUrl {
 }
 
 impl CookieUrl {
-    fn new(url: Url, match_subdomains: bool) -> Self {
+    pub fn new(url: Url, match_subdomains: bool) -> Self {
         Self { url, match_subdomains }
     }
 }
