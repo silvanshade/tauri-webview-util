@@ -74,6 +74,5 @@ strip = true
 
 [patch.crates-io]
 block2 = { git = "https://github.com/silvanshade/objc2", branch = "webkit-skips" }
-core-graphics-types = { git = "https://github.com/servo/core-foundation-rs", tag = "core-graphics-types-v0.1.1" }
 icrate = { git = "https://github.com/silvanshade/objc2", branch = "webkit-skips" }
 tauri = { git = "https://github.com/tauri-apps/tauri", rev = "3f35b45" }
