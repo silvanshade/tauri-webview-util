@@ -158,7 +158,7 @@ impl<'a> CookiePatternBuilder<'a> {
                     }
                     let host = url.host().ok_or::<String>(format!("URL {url} has no host"))?;
                     let prefix = if *match_subdomains { r#".*\.?"# } else { "" };
-                    let pattern = format!("^{scheme}://{prefix}{host}$");
+                    let pattern = format!("^{scheme}://{prefix}{host}/$");
                     Ok(pattern)
                 })
                 .intersperse(Ok::<String, String>(String::from("|")))
