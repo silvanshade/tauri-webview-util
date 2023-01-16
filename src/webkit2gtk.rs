@@ -75,10 +75,14 @@ impl TryFrom<soup::Cookie> for Cookie {
     type Error = BoxError;
 
     fn try_from(mut cookie: soup::Cookie) -> Result<Self, Self::Error> {
-        let name = cookie.name().map(Into::into);
-        let value = cookie.value().map(Into::into);
-        let domain = cookie.domain().map(Into::into);
-        let path = cookie.path().map(Into::into);
+        fn unexpectedly_null(field: &str) -> BoxError {
+            format!("field `{field}` unexpectedly null").into()
+        }
+        let name = cookie.name().map(Into::into).ok_or(unexpectedly_null("name"))?;
+        let value = cookie.value().map(Into::into).ok_or(unexpectedly_null("value"))?;
+        let domain = cookie.domain().map(Into::into).ok_or(unexpectedly_null("domain"))?;
+        let path = cookie.path().map(Into::into).ok_or(unexpectedly_null("path"))?;
+        let port_list = None;
         let expires = cookie
             .expires()
             .and_then(|mut date| {
@@ -90,20 +94,25 @@ impl TryFrom<soup::Cookie> for Cookie {
                 time::OffsetDateTime::parse(&s, &description)
             })
             .transpose()?;
-        let is_http_only = None;
+        let is_http_only = cookie.is_http_only();
         let same_site = None;
-        let is_secure = None;
+        let is_secure = cookie.is_secure();
         let is_session = None;
+        let comment = None;
+        let comment_url = None;
         Ok(Self {
             name,
             value,
             domain,
             path,
+            port_list,
             expires,
             is_http_only,
             same_site,
             is_secure,
             is_session,
+            comment,
+            comment_url,
         })
     }
 }

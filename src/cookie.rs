@@ -29,7 +29,7 @@ pub struct Cookie {
     pub is_http_only: bool,
     pub same_site: Option<String>,
     pub is_secure: bool,
-    pub is_session: bool,
+    pub is_session: Option<bool>,
     pub comment: Option<String>,
     pub comment_url: Option<Url>,
 }
