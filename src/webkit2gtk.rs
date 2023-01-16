@@ -74,7 +74,7 @@ impl crate::WebviewExt for Window {
 impl TryFrom<soup::Cookie> for Cookie {
     type Error = BoxError;
 
-    fn try_from(mut cookie: soup::Cookie) -> Result<Self, Self::Error> {
+    fn try_from(cookie: soup::Cookie) -> Result<Self, Self::Error> {
         fn unexpectedly_null(field: &str) -> BoxError {
             format!("field `{field}` unexpectedly null").into()
         }
