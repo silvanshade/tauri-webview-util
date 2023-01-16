@@ -8,6 +8,13 @@ use crate::BoxResult;
 use regex::Regex;
 use url::Url;
 
+#[cfg(target_os = "windows")]
+use ::{
+    webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Cookie,
+    windows::core::PWSTR,
+    windows::Win32::Foundation::BOOL,
+};
+
 #[cfg_attr(feature = "async-graphql", derive(SimpleObject))]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -88,8 +95,22 @@ pub struct CookiePattern {
 }
 
 impl CookiePattern {
-    pub fn is_match(&self, domain: &str) -> bool {
-        self.regex.is_match(domain)
+    #[cfg(target_os = "windows")]
+    pub fn is_match(&self, cookie: &ICoreWebView2Cookie) -> BoxResult<bool> {
+        let domain = unsafe {
+            let ptr = &mut PWSTR::null();
+            cookie.Name(ptr)?;
+            ptr.to_string()?
+        };
+        let domain = domain.trim_start_matches('.');
+        let is_secure = unsafe {
+            let ptr = &mut BOOL::default();
+            cookie.IsSecure(ptr)?;
+            ptr.as_bool()
+        };
+        let scheme = if is_secure { "https" } else { "http" };
+        let url = Url::parse(&format!("{scheme}://{domain}"))?;
+        Ok(self.regex.is_match(url.as_str()))
     }
 }
 

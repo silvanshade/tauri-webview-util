@@ -1,4 +1,4 @@
-use crate::{ApiResult, BoxError, BoxResult, Cookie};
+use crate::{ApiResult, BoxError, BoxResult, Cookie, CookiePattern};
 use futures::{future::BoxFuture, prelude::*};
 use tauri::{window::PlatformWebview, Window};
 use url::Url;
@@ -92,11 +92,12 @@ impl crate::WebviewExt for Window {
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument)]
-    fn webview_delete_cookies(&self, url: Option<Url>) -> BoxFuture<BoxResult<Vec<Cookie>>> {
+    fn webview_delete_cookies(&self, pattern: Option<CookiePattern>) -> BoxFuture<BoxResult<Vec<Cookie>>> {
         let window = self.clone();
         async move {
+            let pattern = pattern.unwrap_or_default();
             let mut cookies = vec![];
-            if let Some(list) = unsafe { webview_get_raw_cookies(&window, url.clone()) }.await? {
+            if let Some(list) = unsafe { webview_get_raw_cookies(&window) }.await? {
                 let cookie_manager = unsafe { webview_get_cookie_manager(&window) }.await?;
                 let cookie_manager = cookie_manager.lock()?;
                 let list = list.lock()?;
@@ -105,8 +106,10 @@ impl crate::WebviewExt for Window {
                     list.Count(count)?;
                     for i in 0 .. *count {
                         let cookie = list.GetValueAtIndex(i)?;
-                        cookie_manager.DeleteCookie(&cookie)?;
-                        cookies.push(cookie.try_into()?);
+                        if pattern.is_match(&cookie)? {
+                            cookie_manager.DeleteCookie(&cookie)?;
+                            cookies.push(Cookie::try_from(cookie)?);
+                        }
                     }
                 }
             }
@@ -116,17 +119,21 @@ impl crate::WebviewExt for Window {
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument)]
-    fn webview_get_cookies(&self, url: Option<Url>) -> BoxFuture<BoxResult<Vec<Cookie>>> {
+    fn webview_get_cookies(&self, pattern: Option<CookiePattern>) -> BoxFuture<BoxResult<Vec<Cookie>>> {
         let window = self.clone();
         async move {
-            if let Some(list) = unsafe { webview_get_raw_cookies(&window, url) }.await? {
+            let pattern = pattern.unwrap_or_default();
+            if let Some(list) = unsafe { webview_get_raw_cookies(&window) }.await? {
                 let list = list.lock()?;
                 let mut cookies = Vec::<Cookie>::new();
                 unsafe {
                     let count = &mut u32::default();
                     list.Count(count)?;
                     for i in 0 .. *count {
-                        cookies.push(list.GetValueAtIndex(i)?.try_into()?);
+                        let cookie = list.GetValueAtIndex(i)?;
+                        if pattern.is_match(&cookie)? {
+                            cookies.push(Cookie::try_from(cookie)?);
+                        }
                     }
                 }
                 Ok(cookies)
@@ -242,13 +249,9 @@ async unsafe fn webview_get_cookie_manager(window: &Window) -> BoxResult<ApiResu
 }
 
 #[cfg_attr(feature = "tracing", tracing::instrument)]
-async unsafe fn webview_get_raw_cookies(
-    window: &Window,
-    url: Option<Url>,
-) -> BoxResult<Option<ApiResult<ICoreWebView2CookieList>>> {
+async unsafe fn webview_get_raw_cookies(window: &Window) -> BoxResult<Option<ApiResult<ICoreWebView2CookieList>>> {
     unsafe fn run(
         webview: PlatformWebview,
-        url: Option<Url>,
         done_tx: oneshot::Sender<Option<ApiResult<ICoreWebView2CookieList>>>,
     ) -> Result<(), wry::Error> {
         let webview = webview.controller().CoreWebView2().map_err(WindowsError)?;
@@ -256,7 +259,7 @@ async unsafe fn webview_get_raw_cookies(
         let manager = webview.CookieManager().map_err(WindowsError)?;
         GetCookiesCompletedHandler::wait_for_async_operation(
             Box::new(move |handler| {
-                let uri = url.map_or(HSTRING::default(), |url| HSTRING::from(url.as_str()));
+                let uri = HSTRING::default();
                 manager.GetCookies(&uri, &handler)?;
                 Ok(())
             }),
@@ -275,7 +278,7 @@ async unsafe fn webview_get_raw_cookies(
     let (call_tx, call_rx) = oneshot::channel();
     window
         .with_webview(move |webview| unsafe {
-            let result = run(webview, url, done_tx).map_err(Into::<BoxError>::into);
+            let result = run(webview, done_tx).map_err(Into::<BoxError>::into);
             call_tx.send(result).unwrap();
         })
         .map_err(Into::<BoxError>::into)
