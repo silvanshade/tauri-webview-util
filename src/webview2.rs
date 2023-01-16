@@ -185,6 +185,7 @@ impl TryFrom<ICoreWebView2Cookie> for Cookie {
             let value = value.to_string()?.into();
             let domain = domain.to_string()?.into();
             let path = path.to_string()?.into();
+            let port_list = None;
             let expires = {
                 let expires = expires.round() as i64;
                 time::OffsetDateTime::from_unix_timestamp(expires)?
@@ -200,17 +201,22 @@ impl TryFrom<ICoreWebView2Cookie> for Cookie {
             .into();
             let is_secure = is_secure.as_bool().into();
             let is_session = is_session.as_bool().into();
+            let comment = None;
+            let comment_url = None;
 
             Ok(Self {
                 name,
                 value,
                 domain,
                 path,
+                port_list,
                 expires,
                 is_http_only,
                 same_site,
                 is_secure,
                 is_session,
+                comment,
+                comment_url,
             })
         }
     }

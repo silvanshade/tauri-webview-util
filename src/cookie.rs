@@ -19,10 +19,10 @@ pub struct Cookie {
     pub path: String,
     pub port_list: Option<Vec<u16>>,
     pub expires: Option<time::OffsetDateTime>,
-    pub http_only: bool,
+    pub is_http_only: bool,
     pub same_site: Option<String>,
-    pub secure: bool,
-    pub session: bool,
+    pub is_secure: bool,
+    pub is_session: bool,
     pub comment: Option<String>,
     pub comment_url: Option<Url>,
 }
@@ -49,12 +49,12 @@ impl std::fmt::Display for Cookie {
         for expires in self.expires.iter() {
             r = r.field("expires", expires);
         }
-        r = r.field("http_only", &self.http_only);
+        r = r.field("is_http_only", &self.is_http_only);
         for same_site in self.same_site.iter() {
             r = r.field("same_site", same_site);
         }
-        r = r.field("secure", &self.secure);
-        r = r.field("session", &self.session);
+        r = r.field("is_secure", &self.is_secure);
+        r = r.field("is_session", &self.is_session);
         for comment in self.comment.iter() {
             r = r.field("comment", comment);
         }
