@@ -73,6 +73,6 @@ panic = "abort"
 strip = true
 
 [patch.crates-io]
-block2 = { git = "https://github.com/silvanshade/objc2", branch = "webkit-skips" }
-icrate = { git = "https://github.com/silvanshade/objc2", branch = "webkit-skips" }
+block2 = { git = "https://github.com/silvanshade/objc2", branch = "webkit-fix-file-paths" }
+icrate = { git = "https://github.com/silvanshade/objc2", branch = "webkit-fix-file-paths" }
 tauri = { git = "https://github.com/tauri-apps/tauri", rev = "3f35b45" }
