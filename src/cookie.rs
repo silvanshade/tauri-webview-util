@@ -99,7 +99,7 @@ impl CookiePattern {
     pub fn is_match(&self, cookie: &ICoreWebView2Cookie) -> BoxResult<bool> {
         let domain = unsafe {
             let ptr = &mut PWSTR::null();
-            cookie.Name(ptr)?;
+            cookie.Domain(ptr)?;
             ptr.to_string()?
         };
         let domain = domain.trim_start_matches('.');
