@@ -20,13 +20,13 @@ use futures::{future::BoxFuture, stream::BoxStream};
 use std::ops::{Deref, DerefMut};
 use url::Url;
 
-pub type BoxError<'a> = Box<dyn std::error::Error + Send + Sync + 'a>;
-pub type BoxResult<'a, T> = Result<T, BoxError<'a>>;
+pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
+pub type BoxResult<T> = Result<T, BoxError>;
 
 pub trait WebviewExt: private::WebviewExtSealed {
-    fn webview_clear_cache(&self) -> BoxFuture<BoxResult<()>>;
-    fn webview_delete_cookies(&self, pattern: Option<CookiePattern>) -> BoxFuture<BoxResult<Vec<Cookie>>>;
-    fn webview_get_cookies(&self, pattern: Option<CookiePattern>) -> BoxStream<BoxResult<Cookie>>;
+    fn webview_clear_cache(&self) -> BoxFuture<'static, BoxResult<()>>;
+    fn webview_delete_cookies(&self, pattern: Option<CookiePattern>) -> BoxFuture<'static, BoxResult<Vec<Cookie>>>;
+    fn webview_get_cookies(&self, pattern: Option<CookiePattern>) -> BoxStream<'static, BoxResult<Cookie>>;
     fn webview_navigate(&self, url: Url) -> BoxResult<()>;
 }
 

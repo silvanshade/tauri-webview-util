@@ -103,7 +103,7 @@ impl CookiePattern {
         target_os = "openbsd",
         target_os = "netbsd"
     ))]
-    pub(crate) fn cookie_matches(&self, cookie: &mut soup::Cookie) -> BoxResult<'static, bool> {
+    pub(crate) fn cookie_matches(&self, cookie: &mut soup::Cookie) -> BoxResult<bool> {
         fn unexpectedly_null(field: &str) -> BoxError {
             format!("field `{field}` unexpectedly null").into()
         }
@@ -165,7 +165,7 @@ impl<'a> CookiePatternBuilder<'a> {
         self
     }
 
-    pub fn build(self) -> BoxResult<'static, CookiePattern> {
+    pub fn build(self) -> BoxResult<CookiePattern> {
         #![allow(unstable_name_collisions)]
         use itertools::Itertools;
         if let Some(regex) = self.regex {
