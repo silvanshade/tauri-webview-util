@@ -4,7 +4,7 @@ use async_graphql::SimpleObject;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::BoxResult;
+use crate::{BoxError, BoxResult};
 use regex::Regex;
 use url::Url;
 
@@ -90,13 +90,35 @@ impl From<Url> for CookieUrl {
     }
 }
 
+#[derive(Clone)]
 pub struct CookiePattern {
     regex: Regex,
 }
 
 impl CookiePattern {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    pub(crate) fn cookie_matches(&self, cookie: &mut soup::Cookie) -> BoxResult<'static, bool> {
+        fn unexpectedly_null(field: &str) -> BoxError {
+            format!("field `{field}` unexpectedly null").into()
+        }
+        let domain = cookie
+            .domain()
+            .map(Into::<String>::into)
+            .ok_or(unexpectedly_null("domain"))?;
+        let is_secure = cookie.is_secure();
+        let scheme = if is_secure { "https" } else { "http" };
+        let url = Url::parse(&format!("{scheme}://{domain}"))?;
+        Ok(self.regex.is_match(url.as_str()))
+    }
+
     #[cfg(target_os = "windows")]
-    pub fn is_match(&self, cookie: &ICoreWebView2Cookie) -> BoxResult<bool> {
+    pub(crate) fn cookie_matches(&self, cookie: &ICoreWebView2Cookie) -> BoxResult<bool> {
         let domain = unsafe {
             let ptr = &mut PWSTR::null();
             cookie.Domain(ptr)?;
@@ -143,7 +165,7 @@ impl<'a> CookiePatternBuilder<'a> {
         self
     }
 
-    pub fn build(self) -> BoxResult<CookiePattern> {
+    pub fn build(self) -> BoxResult<'static, CookiePattern> {
         #![allow(unstable_name_collisions)]
         use itertools::Itertools;
         if let Some(regex) = self.regex {

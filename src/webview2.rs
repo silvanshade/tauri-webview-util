@@ -106,7 +106,7 @@ impl crate::WebviewExt for Window {
                     list.Count(count)?;
                     for i in 0 .. *count {
                         let cookie = list.GetValueAtIndex(i)?;
-                        if pattern.is_match(&cookie)? {
+                        if pattern.cookie_matches(&cookie)? {
                             cookie_manager.DeleteCookie(&cookie)?;
                             cookies.push(Cookie::try_from(cookie)?);
                         }
@@ -131,7 +131,7 @@ impl crate::WebviewExt for Window {
                     list.Count(count)?;
                     for i in 0 .. *count {
                         let cookie = list.GetValueAtIndex(i)?;
-                        if pattern.is_match(&cookie)? {
+                        if pattern.cookie_matches(&cookie)? {
                             cookies.push(Cookie::try_from(cookie)?);
                         }
                     }
