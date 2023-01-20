@@ -29,8 +29,8 @@ pub type BoxResult<T> = Result<T, BoxError>;
 
 pub trait WebviewExt: private::WebviewExtSealed {
     fn webview_clear_cache(&self) -> BoxFuture<'static, BoxResult<()>>;
-    fn webview_delete_cookies(&self, pattern: Option<CookiePattern>) -> BoxFuture<'static, BoxResult<Vec<Cookie>>>;
-    fn webview_get_cookies(&self, pattern: Option<CookiePattern>) -> BoxStream<'static, BoxResult<Cookie>>;
+    fn webview_delete_cookies(&self, pattern: CookiePattern) -> BoxFuture<'static, BoxResult<Vec<Cookie>>>;
+    fn webview_get_cookies(&self, pattern: CookiePattern) -> BoxStream<'static, BoxResult<Cookie>>;
     fn webview_navigate(&self, url: Url) -> BoxResult<()>;
 }
 

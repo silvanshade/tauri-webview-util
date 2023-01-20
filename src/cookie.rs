@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{BoxError, BoxResult};
 use regex::Regex;
-use tap::prelude::*;
 use url::Url;
 
 #[cfg(target_os = "windows")]
@@ -130,8 +129,9 @@ impl TryFrom<Url> for CookieHost {
 
     fn try_from(url: Url) -> Result<Self, Self::Error> {
         let host = url.host().ok_or(format!(r#"url "{url}" has no host"#))?.to_owned();
-        let scheme = url.scheme();
-        CookieHost::from(host).pipe(Ok)
+        let mut this = CookieHost::from(host);
+        this.schemes = [url.scheme().try_into()?].into_iter().collect();
+        Ok(this)
     }
 }
 

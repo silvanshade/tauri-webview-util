@@ -9,14 +9,13 @@ use icrate::{
     },
     Foundation::{NSArray, NSDate, NSHTTPCookie, NSNumber, NSSet, NSString, NSURLRequest, NSURL},
     WebKit::{
-        WKHTTPCookieStore,
         WKWebView,
         WKWebsiteDataTypeDiskCache,
         WKWebsiteDataTypeMemoryCache,
         WKWebsiteDataTypeOfflineWebApplicationCache,
     },
 };
-use std::{collections::HashSet, ptr::NonNull, sync::Arc};
+use std::{ptr::NonNull, sync::Arc};
 use tap::prelude::*;
 use tauri::{window::PlatformWebview, Window};
 use url::Url;
@@ -59,7 +58,7 @@ impl crate::WebviewExt for Window {
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument)]
-    fn webview_delete_cookies(&self, pattern: Option<CookiePattern>) -> BoxFuture<'static, BoxResult<Vec<Cookie>>> {
+    fn webview_delete_cookies(&self, pattern: CookiePattern) -> BoxFuture<'static, BoxResult<Vec<Cookie>>> {
         let window = self.clone();
         async move {
             let (cookie_tx, mut cookie_rx) = tokio::sync::mpsc::channel(1);
@@ -115,7 +114,7 @@ impl crate::WebviewExt for Window {
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument)]
-    fn webview_get_cookies(&self, pattern: Option<CookiePattern>) -> BoxStream<'static, BoxResult<Cookie>> {
+    fn webview_get_cookies(&self, pattern: CookiePattern) -> BoxStream<'static, BoxResult<Cookie>> {
         let window = self.clone();
         webview_get_raw_cookies(window, pattern)
             .map(|result| result.and_then(|raw_cookie| Cookie::try_from(raw_cookie)))
@@ -142,9 +141,8 @@ impl crate::WebviewExt for Window {
 #[cfg_attr(feature = "tracing", tracing::instrument)]
 fn webview_get_raw_cookies(
     window: Window,
-    pattern: Option<CookiePattern>,
+    pattern: CookiePattern,
 ) -> impl Stream<Item = BoxResult<ApiResult<Id<NSHTTPCookie, Shared>>>> + Send {
-    let pattern = pattern.unwrap_or_default();
     let (cookie_tx, mut cookie_rx) = tokio::sync::mpsc::unbounded_channel();
     let handle = tauri::async_runtime::spawn({
         let window = window.clone();
