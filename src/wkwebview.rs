@@ -15,7 +15,7 @@ use icrate::{
         WKWebsiteDataTypeOfflineWebApplicationCache,
     },
 };
-use std::{ptr::NonNull, sync::Arc};
+use std::ptr::NonNull;
 use tap::prelude::*;
 use tauri::{window::PlatformWebview, Window};
 use url::Url;
@@ -240,14 +240,11 @@ impl TryFrom<&NSHTTPCookie> for Cookie {
     }
 }
 
-impl TryFrom<ApiResult<Id<NSHTTPCookie, Shared>>> for Cookie {
+impl TryFrom<Id<NSHTTPCookie, Shared>> for Cookie {
     type Error = <Cookie as TryFrom<&'static NSHTTPCookie>>::Error;
 
-    fn try_from(value: ApiResult<Id<NSHTTPCookie, Shared>>) -> Result<Self, Self::Error> {
-        let cookie = Arc::try_unwrap(value.0)
-            .map_err(|_| "failed to unwrap Arc")?
-            .into_inner();
-        Cookie::try_from(&*cookie)
+    fn try_from(value: Id<NSHTTPCookie, Shared>) -> Result<Self, Self::Error> {
+        Cookie::try_from(&*value)
     }
 }
 
