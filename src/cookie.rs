@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{BoxError, BoxResult};
 use regex::Regex;
+use std::sync::Arc;
 use url::Url;
 
 #[cfg(target_os = "macos")]
@@ -269,5 +270,20 @@ impl CookiePatternBuilder {
             let regex = Regex::new(r#"^.*$"#)?;
             Ok(CookiePattern { hosts, regex })
         }
+    }
+}
+
+impl<T, E> TryFrom<crate::ApiResult<T>> for Cookie
+where
+    Cookie: TryFrom<T, Error = E>,
+    E: From<String>,
+{
+    type Error = <Cookie as TryFrom<T>>::Error;
+
+    fn try_from(value: crate::ApiResult<T>) -> Result<Self, Self::Error> {
+        let cookie = Arc::try_unwrap(value.0)
+            .map_err(|_| "failed to unwrap Arc".into())?
+            .into_inner();
+        Cookie::try_from(cookie)
     }
 }
