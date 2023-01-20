@@ -14,10 +14,14 @@ mod wkwebview;
 mod webview2;
 
 mod cookie;
-pub use cookie::{Cookie, CookiePattern, CookiePatternBuilder, CookieUrl};
+pub use cookie::{Cookie, CookieHost, CookiePattern, CookiePatternBuilder};
 
 use futures::{future::BoxFuture, stream::BoxStream};
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
+use tokio::sync::Mutex;
 use url::Url;
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -36,12 +40,12 @@ mod private {
     }
 }
 
-#[derive(Debug)]
-struct ApiResult<T>(T);
+#[derive(Clone, Debug)]
+struct ApiResult<T>(Arc<Mutex<T>>);
 
 impl<T> ApiResult<T> {
     fn new(value: T) -> Self {
-        Self(value)
+        Self(Arc::new(Mutex::new(value)))
     }
 }
 
@@ -52,7 +56,7 @@ impl<T> From<T> for ApiResult<T> {
 }
 
 impl<T> Deref for ApiResult<T> {
-    type Target = T;
+    type Target = Arc<Mutex<T>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

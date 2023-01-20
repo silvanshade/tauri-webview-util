@@ -121,11 +121,13 @@ fn webview_get_raw_cookies(
                     move |result| match result {
                         Ok(data) => {
                             for record in data {
-                                record_tx.send(Ok(record.conv::<ApiResult<_>>())).unwrap();
+                                if record_tx.send(Ok(record.conv::<ApiResult<_>>())).is_err() {
+                                    break;
+                                }
                             }
                         },
                         Err(err) => {
-                            record_tx.send(Err::<_, BoxError>(err.into())).unwrap();
+                            record_tx.send(Err::<_, BoxError>(err.into()));
                         },
                     },
                 );
@@ -136,18 +138,22 @@ fn webview_get_raw_cookies(
                             Ok(is_match) => {
                                 if is_match {
                                     let result = Ok(cookie.conv::<ApiResult<_>>());
-                                    cookie_tx.send(result).unwrap();
+                                    if cookie_tx.send(result).is_err() {
+                                        break;
+                                    }
                                 }
                             },
                             Err(err) => {
                                 let result = Err(err);
-                                cookie_tx.send(result).unwrap();
+                                if cookie_tx.send(result).is_err() {
+                                    break;
+                                }
                             },
                         }
                     }
                 },
                 Err(err) => {
-                    cookie_tx.send(Err::<_, BoxError>(err.into())).unwrap();
+                    cookie_tx.send(Err::<_, BoxError>(err.into()));
                 },
             };
             while let Some(record) = record_rx.recv().await {
