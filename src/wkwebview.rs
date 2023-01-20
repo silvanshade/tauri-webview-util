@@ -87,10 +87,19 @@ impl crate::WebviewExt for Window {
                     while let Some(raw_cookie) = cookie_rx.recv().await {
                         tokio::task::block_in_place(|| {
                             let raw_cookie = &**raw_cookie.blocking_lock();
+                            let done = dispatch::Semaphore::new(0);
+                            let completion_handler = ConcreteBlock::new({
+                                let done = done.clone();
+                                move || {
+                                    done.signal();
+                                }
+                            })
+                            .copy();
                             http_cookie_store
                                 .blocking_lock()
-                                .deleteCookie_completionHandler(raw_cookie, None);
+                                .deleteCookie_completionHandler(raw_cookie, Some(&completion_handler));
                             result_tx.blocking_send(Cookie::try_from(raw_cookie))?;
+                            done.wait();
                             Ok::<_, BoxError>(())
                         })?;
                     }
