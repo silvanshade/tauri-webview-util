@@ -3,13 +3,15 @@ use std::collections::BTreeSet;
 #[cfg(feature = "async-graphql")]
 use async_graphql::SimpleObject;
 
-use icrate::Foundation::NSHTTPCookie;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::{BoxError, BoxResult};
 use regex::Regex;
 use url::Url;
+
+#[cfg(target_os = "macos")]
+use icrate::Foundation::NSHTTPCookie;
 
 #[cfg(target_os = "windows")]
 use ::{
@@ -176,6 +178,7 @@ impl CookiePattern {
         Ok(self.regex.is_match(url.as_str()))
     }
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn cookie_matches(&self, cookie: &NSHTTPCookie) -> BoxResult<bool> {
         let domain = unsafe { cookie.domain() }.to_string();
         let domain = domain.trim_start_matches('.');
