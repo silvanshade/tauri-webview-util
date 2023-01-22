@@ -143,16 +143,6 @@ impl CookieHost {
         self.matches_subdomains = true;
         self
     }
-
-    pub(crate) fn urls(&self) -> Vec<Url> {
-        let mut urls = vec![];
-        for scheme in self.schemes.iter() {
-            let host = &self.host;
-            let url = Url::parse(&format!("{scheme}://{host}")).expect("parsing should never fail");
-            urls.push(url);
-        }
-        urls
-    }
 }
 
 impl From<url::Host> for CookieHost {
@@ -186,6 +176,8 @@ impl TryFrom<&str> for CookieHostScheme {
 
 #[derive(Clone)]
 pub struct CookiePattern {
+    // TODO: use for optimization
+    #[allow(unused)]
     pub(crate) hosts: Option<BTreeSet<CookieHost>>,
     pub(crate) matcher: Arc<dyn Fn(&str, bool) -> bool + Send + Sync + 'static>,
 }
