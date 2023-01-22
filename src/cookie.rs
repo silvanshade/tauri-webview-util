@@ -1,25 +1,46 @@
-use std::collections::BTreeSet;
-
+use crate::{BoxError, BoxResult};
 #[cfg(feature = "async-graphql")]
 use async_graphql::SimpleObject;
-
+#[cfg(feature = "regex")]
+use regex::Regex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
-use crate::{BoxError, BoxResult};
-use regex::Regex;
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
+use tap::prelude::*;
 use url::Url;
-
-#[cfg(target_os = "macos")]
-use icrate::Foundation::NSHTTPCookie;
-
 #[cfg(target_os = "windows")]
 use ::{
     webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Cookie,
     windows::core::PWSTR,
     windows::Win32::Foundation::BOOL,
 };
+
+#[derive(Debug)]
+pub struct CookieError(BoxError);
+
+impl std::fmt::Display for CookieError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl std::error::Error for CookieError {
+}
+unsafe impl Send for CookieError {
+}
+unsafe impl Sync for CookieError {
+}
+
+impl From<BoxError> for CookieError {
+    fn from(error: BoxError) -> Self {
+        CookieError(error)
+    }
+}
+
+impl From<String> for CookieError {
+    fn from(error: String) -> Self {
+        error.conv::<BoxError>().into()
+    }
+}
 
 #[cfg_attr(feature = "async-graphql", derive(SimpleObject))]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
@@ -31,6 +52,7 @@ pub struct Cookie {
     pub domain: String,
     pub path: String,
     pub port_list: Option<Vec<u16>>,
+    #[cfg(feature = "time")]
     pub expires: Option<time::OffsetDateTime>,
     pub is_http_only: bool,
     pub same_site: Option<String>,
@@ -59,6 +81,7 @@ impl std::fmt::Display for Cookie {
                 r = r.field("port_list", port_list);
             }
         }
+        #[cfg(feature = "time")]
         for expires in self.expires.iter() {
             r = r.field("expires", expires);
         }
@@ -93,16 +116,22 @@ impl std::fmt::Display for CookieHostScheme {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct CookieHost {
-    host: url::Host,
     schemes: BTreeSet<CookieHostScheme>,
+    host: url::Host,
+    matches_subdomains: bool,
 }
 
 impl CookieHost {
     pub fn new(host: url::Host) -> Self {
         let schemes = [CookieHostScheme::Http, CookieHostScheme::Https].into_iter().collect();
-        Self { host, schemes }
+        let matches_subdomains = false;
+        Self {
+            schemes,
+            host,
+            matches_subdomains,
+        }
     }
 
     pub fn with_schemes(mut self, schemes: &[CookieHostScheme]) -> Self {
@@ -110,7 +139,12 @@ impl CookieHost {
         self
     }
 
-    pub fn urls(&self) -> Vec<Url> {
+    pub fn with_subdomains(mut self) -> Self {
+        self.matches_subdomains = true;
+        self
+    }
+
+    pub(crate) fn urls(&self) -> Vec<Url> {
         let mut urls = vec![];
         for scheme in self.schemes.iter() {
             let host = &self.host;
@@ -152,60 +186,8 @@ impl TryFrom<&str> for CookieHostScheme {
 
 #[derive(Clone)]
 pub struct CookiePattern {
-    hosts: Option<Vec<CookieHost>>,
-    regex: Regex,
-}
-
-impl CookiePattern {
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd"
-    ))]
-    pub(crate) fn cookie_matches(&self, cookie: &mut soup::Cookie) -> BoxResult<bool> {
-        fn unexpectedly_null(field: &str) -> BoxError {
-            format!("field `{field}` unexpectedly null").into()
-        }
-        let domain = cookie
-            .domain()
-            .map(Into::<String>::into)
-            .ok_or(unexpectedly_null("domain"))?;
-        let domain = domain.trim_start_matches('.');
-        let is_secure = cookie.is_secure();
-        let scheme = if is_secure { "https" } else { "http" };
-        let url = Url::parse(&format!("{scheme}://{domain}"))?;
-        Ok(self.regex.is_match(url.as_str()))
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(crate) fn cookie_matches(&self, cookie: &NSHTTPCookie) -> BoxResult<bool> {
-        let domain = unsafe { cookie.domain() }.to_string();
-        let domain = domain.trim_start_matches('.');
-        let secure = unsafe { cookie.isSecure() };
-        let scheme = if secure { "https" } else { "http" };
-        let url = format!("{scheme}://{domain}");
-        Ok(self.regex.is_match(url.as_str()))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn cookie_matches(&self, cookie: &ICoreWebView2Cookie) -> BoxResult<bool> {
-        let domain = unsafe {
-            let ptr = &mut PWSTR::null();
-            cookie.Domain(ptr)?;
-            ptr.to_string()?
-        };
-        let domain = domain.trim_start_matches('.');
-        let is_secure = unsafe {
-            let ptr = &mut BOOL::default();
-            cookie.IsSecure(ptr)?;
-            ptr.as_bool()
-        };
-        let scheme = if is_secure { "https" } else { "http" };
-        let url = Url::parse(&format!("{scheme}://{domain}"))?;
-        Ok(self.regex.is_match(url.as_str()))
-    }
+    pub(crate) hosts: Option<BTreeSet<CookieHost>>,
+    pub(crate) matcher: Arc<dyn Fn(&str, bool) -> bool + Send + Sync + 'static>,
 }
 
 impl Default for CookiePattern {
@@ -221,69 +203,84 @@ impl Default for CookiePattern {
 #[derive(Default)]
 pub struct CookiePatternBuilder {
     hosts: Option<Vec<CookieHost>>,
+    #[cfg(feature = "regex")]
     regex: Option<Regex>,
-    match_subdomains: bool,
 }
 
 impl CookiePatternBuilder {
     pub fn match_hosts(mut self, hosts: Vec<CookieHost>) -> CookiePatternBuilder {
         self.hosts = hosts.into();
-        self.regex = None;
+        #[cfg(feature = "regex")]
+        {
+            self.regex = None;
+        }
         self
     }
 
+    #[cfg(feature = "regex")]
     pub fn match_regex(mut self, regex: Regex) -> CookiePatternBuilder {
         self.hosts = None;
         self.regex = regex.into();
         self
     }
 
+    #[cfg(feature = "regex")]
     pub fn build(self) -> BoxResult<CookiePattern> {
-        #![allow(unstable_name_collisions)]
-        use itertools::Itertools;
-        let prefix = if self.match_subdomains { r#".*\.?"# } else { "" };
         if let Some(regex) = self.regex {
             let hosts = None;
-            Ok(CookiePattern { hosts, regex })
-        } else if let Some(hosts) = &self.hosts {
-            let pattern = hosts
-                .iter()
-                .flat_map(|cookie_host| {
-                    let CookieHost { host, schemes } = cookie_host;
-                    std::iter::empty()
-                        .chain(Some(String::from("(?:")))
-                        .chain({
-                            schemes
-                                .into_iter()
-                                .map(move |scheme| format!("^{scheme}://{prefix}{host}/$"))
-                                .intersperse(String::from("|"))
-                        })
-                        .chain(Some(String::from(")")))
-                })
-                .intersperse(String::from("|"))
-                .collect::<String>();
-            let hosts = if self.match_subdomains { None } else { self.hosts };
-            let regex = Regex::new(&pattern)?;
-            Ok(CookiePattern { hosts, regex })
+            let matcher = Arc::new(move |host: &str, is_secure: bool| {
+                if regex.is_match(&format!("https://{host}")) {
+                    return true;
+                }
+                if !is_secure && regex.is_match(&format!("http://{host}")) {
+                    return true;
+                }
+                false
+            });
+            Ok(CookiePattern { hosts, matcher })
         } else {
-            let hosts = None;
-            let regex = Regex::new(r#"^.*$"#)?;
-            Ok(CookiePattern { hosts, regex })
+            self.build_without_regex()
         }
     }
-}
 
-impl<T, E> TryFrom<crate::ApiResult<T>> for Cookie
-where
-    Cookie: TryFrom<T, Error = E>,
-    E: From<String>,
-{
-    type Error = <Cookie as TryFrom<T>>::Error;
+    #[cfg(not(feature = "regex"))]
+    pub fn build(self) -> BoxResult<CookiePattern> {
+        self.build_without_regex()
+    }
 
-    fn try_from(value: crate::ApiResult<T>) -> Result<Self, Self::Error> {
-        let cookie = Arc::try_unwrap(value.0)
-            .map_err(|_| "failed to unwrap Arc".into())?
-            .into_inner();
-        Cookie::try_from(cookie)
+    pub fn build_without_regex(self) -> BoxResult<CookiePattern> {
+        match self.hosts {
+            None => {
+                let hosts = None;
+                let matcher = Arc::new(|_: &str, _| true);
+                Ok(CookiePattern { hosts, matcher })
+            },
+            Some(hosts) => {
+                let hosts = hosts.into_iter().collect::<BTreeSet<_>>();
+                let matcher = Arc::new({
+                    let hosts = hosts.clone();
+                    move |host: &str, is_secure| {
+                        for cookie_host in hosts.iter() {
+                            if is_secure && !cookie_host.schemes.contains(&CookieHostScheme::Https) {
+                                return false;
+                            }
+                            if let Some(prefix) = host.strip_suffix(&cookie_host.host.to_string()) {
+                                if prefix.is_empty() {
+                                    return true;
+                                }
+                                if prefix.ends_with('.') && cookie_host.matches_subdomains {
+                                    return true;
+                                }
+                            }
+                        }
+                        false
+                    }
+                });
+                Ok(CookiePattern {
+                    hosts: hosts.into(),
+                    matcher,
+                })
+            },
+        }
     }
 }

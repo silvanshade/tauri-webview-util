@@ -1,4 +1,4 @@
-use crate::{ApiResult, BoxError, BoxResult, Cookie, CookiePattern};
+use crate::{BoxError, BoxResult, Cookie, CookiePattern};
 use async_stream::try_stream;
 use block2::ConcreteBlock;
 use futures::{future::BoxFuture, prelude::*, stream::BoxStream};
@@ -15,113 +15,120 @@ use icrate::{
         WKWebsiteDataTypeOfflineWebApplicationCache,
     },
 };
-use std::ptr::NonNull;
+use std::{ptr::NonNull, sync::Arc};
 use tap::prelude::*;
 use tauri::{window::PlatformWebview, Window};
 use url::Url;
 
-impl crate::WebviewExt for Window {
-    #[cfg_attr(feature = "tracing", tracing::instrument)]
+impl crate::WebViewExt for Window {
     fn webview_clear_cache(&self) -> BoxFuture<'static, BoxResult<()>> {
         let window = self.clone();
         async move {
-            let done = dispatch::Semaphore::new(0);
-            window
-                .with_webview({
-                    let done = done.clone();
-                    |webview| unsafe {
-                        let webview = webview.WKWebView();
-                        let configuration = webview.configuration();
-                        let data_store = configuration.websiteDataStore();
-                        let data_types = NSSet::from_slice(&[
-                            WKWebsiteDataTypeMemoryCache.to_owned(),
-                            WKWebsiteDataTypeDiskCache.to_owned(),
-                            WKWebsiteDataTypeOfflineWebApplicationCache.to_owned(),
-                        ]);
-                        let date = NSDate::distantPast();
-                        let completion_handler = ConcreteBlock::new(move || {
-                            done.signal();
-                        })
-                        .copy();
-                        data_store.removeDataOfTypes_modifiedSince_completionHandler(
-                            &data_types,
-                            &date,
-                            &completion_handler,
-                        );
-                    }
-                })
-                .map_err(Into::<BoxError>::into)?;
-            done.future().await?;
+            let notifier = tokio::sync::Notify::new().conv::<Arc<_>>();
+            window.with_webview({
+                let notifier = notifier.clone();
+                move |webview| unsafe {
+                    let webview = webview.WKWebView();
+                    let configuration = webview.configuration();
+                    let data_store = configuration.websiteDataStore();
+                    let data_types = NSSet::from_slice(&[
+                        WKWebsiteDataTypeMemoryCache.to_owned(),
+                        WKWebsiteDataTypeDiskCache.to_owned(),
+                        WKWebsiteDataTypeOfflineWebApplicationCache.to_owned(),
+                    ]);
+                    let date = NSDate::distantPast();
+                    let completion_handler = ConcreteBlock::new(move || notifier.notify_one());
+                    data_store.removeDataOfTypes_modifiedSince_completionHandler(
+                        &data_types,
+                        &date,
+                        &completion_handler,
+                    );
+                }
+            })?;
+            notifier.notified().await;
             Ok(())
         }
         .boxed()
     }
 
-    #[cfg_attr(feature = "tracing", tracing::instrument)]
     fn webview_delete_cookies(&self, pattern: CookiePattern) -> BoxFuture<'static, BoxResult<Vec<Cookie>>> {
         let window = self.clone();
         async move {
-            let (cookie_tx, mut cookie_rx) = tokio::sync::mpsc::channel(1);
-            let (result_tx, mut result_rx) = tokio::sync::mpsc::channel::<BoxResult<Cookie>>(1);
-            let streamer = tauri::async_runtime::spawn({
-                let window = window.clone();
-                async move {
-                    let mut cookies = vec![];
-                    let mut raw_cookies = webview_get_raw_cookies(window, pattern).boxed();
-                    while let Some(raw_cookie) = raw_cookies.try_next().await? {
-                        cookie_tx.send(raw_cookie).await?;
-                        if let Some(cookie) = result_rx.recv().await {
-                            cookies.push(cookie?);
-                        };
-                    }
-                    Ok::<_, BoxError>(cookies)
-                }
-            });
-            let (deleter_tx, deleter_rx) = oneshot::channel();
+            let (tx, mut rx) = tokio::sync::mpsc::channel(1);
             window.with_webview(move |webview| unsafe {
                 let webview = webview.WKWebView();
                 let configuration = webview.configuration();
                 let data_store = configuration.websiteDataStore();
-                let http_cookie_store = data_store.httpCookieStore().conv::<ApiResult<_>>();
-                let deleter = tauri::async_runtime::spawn(async move {
-                    while let Some(raw_cookie) = cookie_rx.recv().await {
-                        tokio::task::block_in_place(|| {
-                            let raw_cookie = &**raw_cookie.blocking_lock();
-                            let done = dispatch::Semaphore::new(0);
-                            let completion_handler = ConcreteBlock::new({
-                                let done = done.clone();
-                                move || {
-                                    done.signal();
-                                }
-                            })
-                            .copy();
-                            http_cookie_store
-                                .blocking_lock()
-                                .deleteCookie_completionHandler(raw_cookie, Some(&completion_handler));
-                            result_tx.blocking_send(Cookie::try_from(raw_cookie))?;
-                            done.wait();
-                            Ok::<_, BoxError>(())
-                        })?;
+                let http_cookie_store = data_store.httpCookieStore();
+                let (get_tx, mut get_rx) = tokio::sync::mpsc::channel(1);
+                let (del_tx, del_rx) = tokio::sync::mpsc::channel(1);
+                http_cookie_store.getAllCookies(&ConcreteBlock::new({
+                    let del_rx = tokio::sync::Mutex::new(del_rx);
+                    move |array: NonNull<NSArray<NSHTTPCookie>>| {
+                        for cookie in array.as_ref().iter() {
+                            let result;
+                            match pattern.cookie_matches(cookie) {
+                                Ok(false) => continue,
+                                Ok(true) => {
+                                    result = Cookie::try_from(cookie);
+                                    get_tx.blocking_send(cookie).unwrap();
+                                    del_rx.blocking_lock().blocking_recv().unwrap();
+                                },
+                                Err(err) => result = Err(err),
+                            }
+                            tx.blocking_send(result).unwrap();
+                        }
                     }
-                    Ok::<_, BoxError>(())
-                });
-                deleter_tx.send(deleter).unwrap();
+                }));
+                while let Some(cookie) = get_rx.blocking_recv() {
+                    http_cookie_store.deleteCookie_completionHandler(
+                        cookie,
+                        Some(&ConcreteBlock::new(|| {
+                            del_tx.blocking_send(()).unwrap();
+                        })),
+                    );
+                }
             })?;
-            deleter_rx.await?.await??;
-            streamer.await?
+            let mut cookies = vec![];
+            while let Some(cookie) = rx.recv().await.transpose()? {
+                cookies.push(cookie);
+            }
+            Ok(cookies)
         }
         .boxed()
     }
 
-    #[cfg_attr(feature = "tracing", tracing::instrument)]
-    fn webview_get_cookies(&self, pattern: CookiePattern) -> BoxStream<'static, BoxResult<Cookie>> {
+    fn webview_get_cookies(&self, pattern: CookiePattern) -> BoxResult<BoxStream<'static, BoxResult<Cookie>>> {
         let window = self.clone();
-        webview_get_raw_cookies(window, pattern)
-            .map(|result| result.and_then(|raw_cookie| Cookie::try_from(raw_cookie)))
-            .boxed()
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        window.with_webview(move |webview| unsafe {
+            let webview = webview.WKWebView();
+            let configuration = webview.configuration();
+            let data_store = configuration.websiteDataStore();
+            let http_cookie_store = data_store.httpCookieStore();
+            http_cookie_store.getAllCookies(&ConcreteBlock::new(|array: NonNull<NSArray<NSHTTPCookie>>| {
+                for cookie in array.as_ref().iter() {
+                    let result;
+                    match pattern.cookie_matches(cookie) {
+                        Ok(false) => continue,
+                        Ok(true) => result = Cookie::try_from(cookie),
+                        Err(err) => result = Err(err),
+                    }
+                    if tx.blocking_send(result).is_err() {
+                        break;
+                    }
+                }
+            }));
+        })?;
+        let stream = try_stream! {
+            while let Some(cookie) = rx.recv().await.transpose()? {
+                yield cookie;
+            }
+        }
+        .boxed();
+        Ok(stream)
     }
 
-    #[cfg_attr(feature = "tracing", tracing::instrument)]
     fn webview_navigate(&self, url: Url) -> BoxResult<()> {
         self.with_webview(move |webview| unsafe {
             let webview = webview.WKWebView();
@@ -133,63 +140,27 @@ impl crate::WebviewExt for Window {
                 #[cfg(feature = "tracing")]
                 tracing::info!(?navigation);
             }
-        })
-        .map_err(Into::into)
+        })?;
+        Ok(())
     }
 }
 
-#[cfg_attr(feature = "tracing", tracing::instrument)]
-fn webview_get_raw_cookies(
-    window: Window,
-    pattern: CookiePattern,
-) -> impl Stream<Item = BoxResult<ApiResult<Id<NSHTTPCookie, Shared>>>> + Send {
-    let (cookie_tx, mut cookie_rx) = tokio::sync::mpsc::unbounded_channel();
-    let handle = tauri::async_runtime::spawn({
-        let window = window.clone();
-        async move {
-            let done = dispatch::Semaphore::new(0);
-            window.with_webview({
-                let done = done.clone();
-                |webview| unsafe {
-                    let webview = webview.WKWebView();
-                    let configuration = webview.configuration();
-                    let data_store = configuration.websiteDataStore();
-                    let http_cookie_store = data_store.httpCookieStore();
-                    http_cookie_store.getAllCookies(
-                        &ConcreteBlock::new(move |array: NonNull<NSArray<NSHTTPCookie>>| {
-                            for cookie in array.as_ref().to_shared_vec() {
-                                match pattern.cookie_matches(&cookie) {
-                                    Ok(is_match) => {
-                                        if is_match {
-                                            let result = Ok(cookie.conv::<ApiResult<_>>());
-                                            if cookie_tx.send(result).is_err() {
-                                                break;
-                                            }
-                                        }
-                                    },
-                                    Err(err) => {
-                                        let result = Err(err);
-                                        if cookie_tx.send(result).is_err() {
-                                            break;
-                                        }
-                                    },
-                                }
-                            }
-                            done.signal();
-                        })
-                        .copy(),
-                    );
-                }
-            })?;
-            done.future().await?;
-            Ok::<_, BoxError>(())
+trait WebViewExtForWKWebView: crate::sealed::WebViewExtForWKWebView {
+    #[allow(non_snake_case)]
+    unsafe fn WKWebView(&self) -> Id<WKWebView, Shared>;
+}
+
+impl crate::sealed::WebViewExtForWKWebView for PlatformWebview {
+}
+impl WebViewExtForWKWebView for PlatformWebview {
+    #[allow(non_snake_case)]
+    unsafe fn WKWebView(&self) -> Id<WKWebView, Shared> {
+        let src = self.inner();
+        let ptr = std::mem::transmute::<_, *mut WKWebView>(src);
+        match Id::retain_autoreleased(ptr) {
+            None => unreachable!("pointer should never be null"),
+            Some(wkwebview) => wkwebview,
         }
-    });
-    try_stream! {
-        while let Some(cookie) = cookie_rx.recv().await {
-            yield cookie?;
-        }
-        handle.await??;
     }
 }
 
@@ -206,6 +177,7 @@ impl TryFrom<&NSHTTPCookie> for Cookie {
                 .portList()
                 .map(|list| list.into_iter().map(|port| u16::try_from(Number::from(port))).collect())
                 .transpose()?;
+            #[cfg(feature = "time")]
             let expires = cookie
                 .expiresDate()
                 .map(|date| {
@@ -228,6 +200,7 @@ impl TryFrom<&NSHTTPCookie> for Cookie {
                 domain,
                 path,
                 port_list,
+                #[cfg(feature = "time")]
                 expires,
                 is_http_only,
                 same_site,
@@ -282,49 +255,11 @@ impl TryFrom<Number> for u16 {
     }
 }
 
-trait WebviewExtForWKWebView: private::WebviewExtForWKWebViewSealed {
-    #[allow(non_snake_case)]
-    unsafe fn WKWebView(&self) -> Id<WKWebView, Shared>;
-}
-
-impl WebviewExtForWKWebView for PlatformWebview {
-    #[allow(non_snake_case)]
-    unsafe fn WKWebView(&self) -> Id<WKWebView, Shared> {
-        let src = self.inner();
-        let ptr = std::mem::transmute::<_, *mut WKWebView>(src);
-        match Id::retain_autoreleased(ptr) {
-            None => unreachable!("pointer should never be null"),
-            Some(wkwebview) => wkwebview,
-        }
-    }
-}
-
-trait SemaphoreExt: private::SemaphoreExtSealed {
-    fn future(&self) -> BoxFuture<BoxResult<()>>;
-}
-
-impl SemaphoreExt for dispatch::Semaphore {
-    #[cfg_attr(feature = "tracing", tracing::instrument)]
-    fn future(&self) -> BoxFuture<BoxResult<()>> {
-        async {
-            if icrate::Foundation::is_main_thread() {
-                let this = self.clone();
-                tokio::task::spawn_blocking(move || this.wait()).await?;
-            } else {
-                self.wait();
-            }
-            Ok(())
-        }
-        .boxed()
-    }
-}
-
-mod private {
-    pub trait SemaphoreExtSealed {}
-    impl SemaphoreExtSealed for dispatch::Semaphore {
-    }
-
-    pub trait WebviewExtForWKWebViewSealed {}
-    impl WebviewExtForWKWebViewSealed for tauri::window::PlatformWebview {
+impl CookiePattern {
+    pub(crate) fn cookie_matches(&self, cookie: &NSHTTPCookie) -> BoxResult<bool> {
+        let domain = unsafe { cookie.domain() }.to_string();
+        let domain = domain.trim_start_matches('.');
+        let secure = unsafe { cookie.isSecure() };
+        Ok((self.matcher)(domain, secure))
     }
 }
